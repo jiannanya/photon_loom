@@ -1,0 +1,76 @@
+
+// {
+//     "version": "2.0.0",
+//     "tasks": [
+//         {
+//             "label": "Compile", // 任务名称，与launch.json的preLaunchTask相对应
+//             "command": "clang++",
+//             "args": [ //编译时的参数
+//                 "${file}",
+//                 "-o", //指定输出文件名
+//                 "${fileDirname}/${fileBasenameNoExtension}.exe",
+//                 "-g", //添加gdb调试选项
+//                 "-Wall",  //开启额外警告
+//                 "-static-libgcc", //静态链接libgcc
+//                 "--target=x86_64-w64-mingw",  //clang编译器需要加上这条，因为它默认的target是msvc；如果用gcc或者linux要注释掉
+//                 "-std=c++17",
+//                 "-I${workspaceFolder}/include", //添加工作路径下的include
+//                 "-L${workspaceFolder}/lib", //添加工作路径下的lib
+//                 "-lglut32", //使用glut
+//                 "-lglu32",  //使用glut
+//                 "-lopengl32", //使用opengl
+//                 "-lglad", //使用glad+glfw，这里可以先注释掉
+//                 "-lglfw3",  //使用glad+glfw，这里可以先注释掉 
+//                 "-lglfw3dll", //使用glad+glfw，这里可以先注释掉
+//                 "-lgdi32",  //使用glad+glfw，这里可以先注释掉
+//             ],
+//             "type": "shell",
+//             "group": {
+//                 "kind": "build",
+//                 "isDefault": true //表示快捷键Ctrl+Shift+B可以运行该任务
+//             },
+//             "presentation": {
+//                 "echo": true,
+//                 "reveal": "always", // 执行任务时是否跳转到终端面板
+//                 "focus": false,
+//                 "panel": "shared" // 不同的文件的编译信息共享一个终端面板
+//             },
+//             "problemMatcher": []
+//         }
+//     ]
+// }
+
+
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "debug",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/c",
+                "${workspaceRoot}/scripts/build_clang_debug.bat",
+                "debug"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "release",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/c",
+                "${workspaceRoot}/scripts/build_clang_release.bat",
+                "release"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        }
+    ]
+}

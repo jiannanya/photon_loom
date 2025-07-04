@@ -1,0 +1,28 @@
+
+{
+    "configurations": [
+        {
+            "name": "MinGW",
+            "intelliSenseMode": "clang-x64",
+            "compilerPath": "F:/cc/programs/LLVM/bin/clang.exe",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "${workspaceFolder}/include/*", 
+                "F:/cc/programs/LLVM/include/*",
+                "F:/cc/programs/mingw64/include*", 
+                "C:\\CC\\src\\projects\\vcpkg\\installed\\x64-windows\\include"
+            ],
+            "defines": [],
+            "browse": {
+                "path": [
+                    "${workspaceFolder}"
+                ],
+                "limitSymbolsToIncludedHeaders": true,
+                "databaseFilename": ""
+            },
+            "cStandard": "c11",
+            "cppStandard": "c++17"
+        }
+    ],
+    "version": 4
+}

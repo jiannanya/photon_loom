@@ -28,7 +28,7 @@
     "clangd.checkUpdates": true,	//clangd自动更新
 
     "clangd.fallbackFlags": [
-        "-ID:\\Program Files\\vcpkg\\installed\\x64-windows\\include",
+        "-I${env:VCPKG_ROOT}\\installed\\x64-windows\\include",
         "-I${workspaceFolder}\\engine",
         "-I${workspaceFolder}\\include",
         "-I${workspaceFolder}",

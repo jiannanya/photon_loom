@@ -116,6 +116,23 @@ struct Mat4 {
       res.m[i][i] = 1.0f;
     return res;
   }
+
+  static Mat4 scale(const Mat4 &m, const Vec3 &s) {
+    Mat4 res = Mat4::identity();
+    res.m[0][0] = s.x;
+    res.m[1][1] = s.y;
+    res.m[2][2] = s.z;
+    return m.multiply(res);
+  }
+
+  static Mat4 translate(const Mat4 &m, const Vec3 &t) {
+    Mat4 res = Mat4::identity();
+    res.m[0][3] = t.x;
+    res.m[1][3] = t.y;
+    res.m[2][3] = t.z;
+    return m.multiply(res);
+  }
+
   Mat4 multiply(const Mat4 &o) const {
     Mat4 res;
     for (int i = 0; i < 4; ++i)
@@ -299,9 +316,13 @@ struct BlinnPhongShaderIO : public IShaderIO {
 };
 
 // Normal Shader 输入输出
+
 struct NormalShaderIO : public IShaderIO {
   Vec3 position_world;
   Vec3 normal_world;
+  Vec3 tangent_world;
+  Vec2 uv;
+  float ndc_z = 0.0f;
   Vec4 position_clip;
   Vec3 color;
 };
@@ -432,83 +453,178 @@ struct IShader {
 
 // Blinn-Phong Shader
 struct BlinnPhongShader : public IShader {
+  Mat4 ModelMatrix; // 模型矩阵
   Mat4 MVP;             // 模型-视图-投影矩阵
   Mat4 NormalMatrix;    // 法线变换矩阵
   Vec3 eye_pos_world;   // 摄像机世界坐标
   Vec3 light_dir_world; // 世界空间光照方向 (指向光源)
   Texture diffuse_tex;  // 漫反射纹理
+  Texture normal_map_tex; // 法线贴图
+  // 材质属性
   float ambient_strength, diffuse_strength, specular_strength,
       shininess; // 材质属性
 
-  BlinnPhongShader(const Mat4 &mvp, const Mat4 &nm, const Vec3 &eye,
-                   const Vec3 &light_dir, const Texture &tex)
-      : MVP(mvp), NormalMatrix(nm), eye_pos_world(eye),
-        light_dir_world(light_dir), diffuse_tex(tex), ambient_strength(0.1f),
-        diffuse_strength(0.7f), specular_strength(0.2f), shininess(32.0f) {}
+  BlinnPhongShader(const Mat4 &m,const Mat4 &mvp, const Mat4 &nm, const Vec3 &eye,
+                   const Vec3 &light_dir, const Texture &tex,const Texture &tex_normal)
+      : ModelMatrix(m), MVP(mvp), NormalMatrix(nm), eye_pos_world(eye),
+        light_dir_world(light_dir), diffuse_tex(tex), normal_map_tex(tex_normal),ambient_strength(0.1f),
+        diffuse_strength(0.2f), specular_strength(0.7f), shininess(32.0f) {}
 
   void vertex(IShaderIO &io) override {
     auto &data = static_cast<BlinnPhongShaderIO &>(io);
     data.position_clip =
         MVP.multiply({data.position_world.x, data.position_world.y,
                       data.position_world.z, 1.0f});
+    data.tangent_world = ModelMatrix.multiply(
+        Vec4(data.tangent_world.x, data.tangent_world.y, data.tangent_world.z, 0.0f))
+        .normalize();
+    data.normal_world = NormalMatrix
+        .multiply(Vec4(data.normal_world.x, data.normal_world.y,
+                       data.normal_world.z, 0.0f))
+        .normalize();
   }
 
   void fragment(IShaderIO &io) override {
     auto &data = static_cast<BlinnPhongShaderIO &>(io);
-    Vec3 N = NormalMatrix
-                 .multiply(Vec4(data.normal_world.x, data.normal_world.y,
-                                data.normal_world.z, 0.0f))
-                 .normalize();
+    // Vec3 N = NormalMatrix
+    //              .multiply(Vec4(data.normal_world.x, data.normal_world.y,
+    //                             data.normal_world.z, 0.0f))
+    //              .normalize();
+    Vec3 N = data.normal_world.normalize();
+    Vec3 T = data.tangent_world.normalize();
+    //T = (T - N * N.dot(T)).normalize();
+    Vec3 B = N.cross(T);
+    if (normal_map_tex.w > 0) {
+      Color normal_map_sample = normal_map_tex.bilinear(data.uv);
+      Vec3 normal_tangent_space = {normal_map_sample.r / 255.0f * 2.0f - 1.0f,
+                                   normal_map_sample.g / 255.0f * 2.0f - 1.0f,
+                                   normal_map_sample.b / 255.0f * 2.0f - 1.0f};
+      normal_tangent_space = normal_tangent_space.normalize();
+      Vec3 perturbed_normal_world;
+      perturbed_normal_world.x = T.x * normal_tangent_space.x +
+                                 B.x * normal_tangent_space.y +
+                                 N.x * normal_tangent_space.z;
+      perturbed_normal_world.y = T.y * normal_tangent_space.x +
+                                 B.y * normal_tangent_space.y +
+                                 N.y * normal_tangent_space.z;
+      perturbed_normal_world.z = T.z * normal_tangent_space.x +
+                                 B.z * normal_tangent_space.y +
+                                 N.z * normal_tangent_space.z;
+      N = perturbed_normal_world.normalize();
+    }
+    // Color c = normal_map_tex.bilinear(data.uv) ;
+    // N = {c.r / 255.0f * 2.0f - 1.0f,
+    //       c.g / 255.0f * 2.0f - 1.0f,
+    //       c.b / 255.0f * 2.0f - 1.0f};
     Vec3 L = (light_dir_world * -1.0f).normalize();
     Vec3 V = (eye_pos_world - data.position_world).normalize();
     Vec3 H = (L + V).normalize();
-
     float NdotL = std::max(0.0f, N.dot(L));
     float NdotH = std::max(0.0f, N.dot(H));
     float spec = std::pow(NdotH, shininess);
-
     Vec3 base_color = {1.0f, 1.0f, 1.0f};
     if (diffuse_tex.w > 0) {
       Color tex_color = diffuse_tex.bilinear(data.uv);
       base_color = {tex_color.r / 255.0f, tex_color.g / 255.0f,
                     tex_color.b / 255.0f};
     }
-
-    Vec3 ambient_color = base_color * ambient_strength;
-    Vec3 diffuse_color = base_color * diffuse_strength * NdotL;
-    Vec3 specular_color = Vec3{1, 1, 1} * specular_strength * spec;
-
-    Vec3 final_color = ambient_color + diffuse_color + specular_color;
+    Vec3 final_color = base_color * ambient_strength +
+                       base_color * diffuse_strength * NdotL +
+                       Vec3{1, 1, 1} * specular_strength * spec;
     final_color.x = std::pow(final_color.x, 1.0f / 2.2f);
     final_color.y = std::pow(final_color.y, 1.0f / 2.2f);
     final_color.z = std::pow(final_color.z, 1.0f / 2.2f);
-
     data.color = final_color;
   }
 };
 
-// Normal Shader (可视化法线)
 struct NormalShader : public IShader {
-  Mat4 MVP;
-  Mat4 NormalMatrix; // 法线变换矩阵
-  NormalShader(const Mat4 &mvp, Mat4 &nm) : MVP(mvp), NormalMatrix(nm) {}
+  Mat4 ModelMatrix; // 模型矩阵
+  Mat4 MVP;             // 模型-视图-投影矩阵
+  Mat4 NormalMatrix;    // 法线变换矩阵
+  Vec3 eye_pos_world;   // 摄像机世界坐标
+  Vec3 light_dir_world; // 世界空间光照方向 (指向光源)
+  Texture diffuse_tex;  // 漫反射纹理
+  Texture normal_map_tex; // 法线贴图
+  // 材质属性
+  float ambient_strength, diffuse_strength, specular_strength,
+      shininess; // 材质属性
+
+  NormalShader(const Mat4 &m,const Mat4 &mvp, const Mat4 &nm, const Vec3 &eye,
+                   const Vec3 &light_dir, const Texture &tex,const Texture &tex_normal)
+      : ModelMatrix(m), MVP(mvp), NormalMatrix(nm), eye_pos_world(eye),
+        light_dir_world(light_dir), diffuse_tex(tex), normal_map_tex(tex_normal),ambient_strength(0.1f),
+        diffuse_strength(0.2f), specular_strength(0.7f), shininess(32.0f) {}
 
   void vertex(IShaderIO &io) override {
     auto &data = static_cast<NormalShaderIO &>(io);
     data.position_clip =
         MVP.multiply({data.position_world.x, data.position_world.y,
                       data.position_world.z, 1.0f});
+    data.tangent_world = ModelMatrix.multiply(
+        Vec4(data.tangent_world.x, data.tangent_world.y, data.tangent_world.z, 0.0f))
+        .normalize();
+    data.normal_world = NormalMatrix
+        .multiply(Vec4(data.normal_world.x, data.normal_world.y,
+                       data.normal_world.z, 0.0f))
+        .normalize();
   }
 
   void fragment(IShaderIO &io) override {
     auto &data = static_cast<NormalShaderIO &>(io);
-    Vec3 n = NormalMatrix
-                 .multiply(Vec4(data.normal_world.x, data.normal_world.y,
-                                data.normal_world.z, 0.0f))
-                 .normalize();
-    data.color = {n.x * 0.5f + 0.5f, n.y * 0.5f + 0.5f, n.z * 0.5f + 0.5f};
+    // Vec3 N = NormalMatrix
+    //              .multiply(Vec4(data.normal_world.x, data.normal_world.y,
+    //                             data.normal_world.z, 0.0f))
+    //              .normalize();
+    Vec3 N = data.normal_world.normalize();
+    Vec3 T = data.tangent_world.normalize();
+    //T = (T - N * N.dot(T)).normalize();
+    Vec3 B = N.cross(T);
+    if (normal_map_tex.w > 0) {
+      Color normal_map_sample = normal_map_tex.bilinear(data.uv);
+      Vec3 normal_tangent_space = {normal_map_sample.r / 255.0f * 2.0f - 1.0f,
+                                   normal_map_sample.g / 255.0f * 2.0f - 1.0f,
+                                   normal_map_sample.b / 255.0f * 2.0f - 1.0f};
+      normal_tangent_space = normal_tangent_space.normalize();
+      Vec3 perturbed_normal_world;
+      perturbed_normal_world.x = T.x * normal_tangent_space.x +
+                                 B.x * normal_tangent_space.y +
+                                 N.x * normal_tangent_space.z;
+      perturbed_normal_world.y = T.y * normal_tangent_space.x +
+                                 B.y * normal_tangent_space.y +
+                                 N.y * normal_tangent_space.z;
+      perturbed_normal_world.z = T.z * normal_tangent_space.x +
+                                 B.z * normal_tangent_space.y +
+                                 N.z * normal_tangent_space.z;
+      N = perturbed_normal_world.normalize();
+      //N = normal_tangent_space.normalize();
+    }
+    data.color = {N.x * 0.5f + 0.5f, N.y * 0.5f + 0.5f, N.z * 0.5f + 0.5f};
   }
 };
+
+// // Normal Shader (可视化法线)
+// struct NormalShader : public IShader {
+//   Mat4 MVP;
+//   Mat4 NormalMatrix; // 法线变换矩阵
+//   NormalShader(const Mat4 &mvp, Mat4 &nm) : MVP(mvp), NormalMatrix(nm) {}
+
+//   void vertex(IShaderIO &io) override {
+//     auto &data = static_cast<NormalShaderIO &>(io);
+//     data.position_clip =
+//         MVP.multiply({data.position_world.x, data.position_world.y,
+//                       data.position_world.z, 1.0f});
+//   }
+
+//   void fragment(IShaderIO &io) override {
+//     auto &data = static_cast<NormalShaderIO &>(io);
+//     Vec3 n = NormalMatrix
+//                  .multiply(Vec4(data.normal_world.x, data.normal_world.y,
+//                                 data.normal_world.z, 0.0f))
+//                  .normalize();
+//     data.color = {n.x * 0.5f + 0.5f, n.y * 0.5f + 0.5f, n.z * 0.5f + 0.5f};
+//   }
+// };
 
 // Texture Shader (只显示纹理)
 struct TextureShader : public IShader {
@@ -536,16 +652,17 @@ struct TextureShader : public IShader {
 // Bump Shader (法线贴图)
 struct BumpShader : public IShader {
   Mat4 MVP;
+  Mat4 ModelMatrix; // 模型矩阵
   Vec3 eye_pos_world, light_dir_world;
   Texture diffuse_tex, normal_map_tex;
   float ambient_strength, diffuse_strength, specular_strength, shininess;
   Mat4 NormalMatrix;
-  BumpShader(const Mat4 &mvp, const Mat4 &nm, const Vec3 &eye,
+  BumpShader(const Mat4& model_matrix ,const Mat4 &mvp, const Mat4 &nm, const Vec3 &eye,
              const Vec3 &light_dir, const Texture &tex,
              const Texture &normalmap)
-      : MVP(mvp), NormalMatrix(nm), eye_pos_world(eye),
+      : ModelMatrix(model_matrix),MVP(mvp), NormalMatrix(nm), eye_pos_world(eye),
         light_dir_world(light_dir), diffuse_tex(tex), normal_map_tex(normalmap),
-        ambient_strength(0.1f), diffuse_strength(0.7f), specular_strength(0.2f),
+        ambient_strength(0.1f), diffuse_strength(0.5f), specular_strength(0.4f),
         shininess(32.0f) {}
 
   void vertex(IShaderIO &io) override {
@@ -553,16 +670,25 @@ struct BumpShader : public IShader {
     data.position_clip =
         MVP.multiply({data.position_world.x, data.position_world.y,
                       data.position_world.z, 1.0f});
+
+    data.tangent_world = ModelMatrix.multiply(
+        Vec4(data.tangent_world.x, data.tangent_world.y, data.tangent_world.z, 0.0f))
+        .normalize();
+    data.normal_world = NormalMatrix
+        .multiply(Vec4(data.normal_world.x, data.normal_world.y,
+                       data.normal_world.z, 0.0f))
+        .normalize();
   }
 
   void fragment(IShaderIO &io) override {
     auto &data = static_cast<BumpShaderIO &>(io);
-    Vec3 N = NormalMatrix
-                 .multiply(Vec4(data.normal_world.x, data.normal_world.y,
-                                data.normal_world.z, 0.0f))
-                 .normalize();
+    // Vec3 N = NormalMatrix
+    //              .multiply(Vec4(data.normal_world.x, data.normal_world.y,
+    //                             data.normal_world.z, 0.0f))
+    //              .normalize();
+    Vec3 N = data.normal_world.normalize();
     Vec3 T = data.tangent_world.normalize();
-    T = (T - N * N.dot(T)).normalize();
+    //T = (T - N * N.dot(T)).normalize();
     Vec3 B = N.cross(T);
     if (normal_map_tex.w > 0) {
       Color normal_map_sample = normal_map_tex.bilinear(data.uv);
@@ -582,6 +708,10 @@ struct BumpShader : public IShader {
                                  N.z * normal_tangent_space.z;
       N = perturbed_normal_world.normalize();
     }
+    // Color c = normal_map_tex.bilinear(data.uv) ;
+    // N = {c.r / 255.0f * 2.0f - 1.0f,
+    //       c.g / 255.0f * 2.0f - 1.0f,
+    //       c.b / 255.0f * 2.0f - 1.0f};
     Vec3 L = (light_dir_world * -1.0f).normalize();
     Vec3 V = (eye_pos_world - data.position_world).normalize();
     Vec3 H = (L + V).normalize();
@@ -1217,6 +1347,10 @@ Mesh loadModel(const std::string &f) {
           t.v[v].normal = {a.normals[3 * idx.normal_index + 0],
                            a.normals[3 * idx.normal_index + 1],
                            a.normals[3 * idx.normal_index + 2]};
+
+        if (a.normals.empty())
+          t.v[v].normal = {0, 0, 1}; // 默认法线
+        
         if (!a.texcoords.empty() && idx.texcoord_index >= 0)
           t.v[v].uv = {a.texcoords[2 * idx.texcoord_index + 0],
                        a.texcoords[2 * idx.texcoord_index + 1]};
@@ -1387,11 +1521,11 @@ private:                                                                       \
 class BlinnPhongPass : public IDrawPass {
   DRAW_PASS_BOILERPLATE(BlinnPhongPass, BlinnPhongShader, BlinnPhongShaderIO)
 public:
-  BlinnPhongPass(std::string n, Mat4 mvp, Mat4 nm, Vec3 eye, Vec3 l,
-                 const Texture &t, Mesh *m, int ms = MSAA_SAMPLES_4,
+  BlinnPhongPass(std::string n,Mat4 model_matrix ,Mat4 mvp, Mat4 nm, Vec3 eye, Vec3 l,
+                 const Texture &t, const Texture &tn,Mesh *m, int ms = MSAA_SAMPLES_4,
                  const float (*off)[2] = MSAA_OFFSETS_4)
       : passName(n), mesh(m), msaaSamples(ms), msaaOffsets(off) {
-    shader = std::make_unique<BlinnPhongShader>(mvp, nm, eye, l, t);
+    shader = std::make_unique<BlinnPhongShader>(model_matrix,mvp, nm, eye, l, t,tn);
   }
 
 private:
@@ -1434,16 +1568,19 @@ private:
 class NormalPass : public IDrawPass {
   DRAW_PASS_BOILERPLATE(NormalPass, NormalShader, NormalShaderIO)
 public:
-  NormalPass(std::string n, Mat4 mvp, Mat4 nm, Mesh *m, int ms = MSAA_SAMPLES_4,
-             const float (*off)[2] = MSAA_OFFSETS_4)
+  NormalPass(std::string n,Mat4 model_matrix ,Mat4 mvp, Mat4 nm, Vec3 eye, Vec3 l,
+                 const Texture &t, const Texture &tn,Mesh *m, int ms = MSAA_SAMPLES_4,
+                 const float (*off)[2] = MSAA_OFFSETS_4)
       : passName(n), mesh(m), msaaSamples(ms), msaaOffsets(off) {
-    shader = std::make_unique<NormalShader>(mvp, nm);
+    shader = std::make_unique<NormalShader>(model_matrix,mvp, nm, eye, l, t,tn);
   }
 
 private:
   void initializeVertex(NormalShaderIO &io, const Vertex &v) {
     io.position_world = v.pos;
     io.normal_world = v.normal;
+    io.tangent_world = v.tangent;
+    io.uv = v.uv;
   }
   void interpolateFragment(NormalShaderIO &f, const NormalShaderIO v[3],
                            float w0, float w1, float w2, float iw, float nz,
@@ -1459,6 +1596,17 @@ private:
                    v[1].normal_world * (1 / v[1].position_clip.w),
                    v[2].normal_world * (1 / v[2].position_clip.w), w0, w1, w2) *
         iw;
+    f.tangent_world =
+        baryInterp(v[0].tangent_world * (1 / v[0].position_clip.w),
+                   v[1].tangent_world * (1 / v[1].position_clip.w),
+                   v[2].tangent_world * (1 / v[2].position_clip.w), w0, w1,
+                   w2) *
+        iw;
+    f.uv = baryInterp(v[0].uv * (1 / v[0].position_clip.w),
+                      v[1].uv * (1 / v[1].position_clip.w),
+                      v[2].uv * (1 / v[2].position_clip.w), w0, w1, w2) *
+           iw;
+    f.ndc_z = nz;
   }
   Vec3 getOutputColor(const NormalShaderIO &f) { return f.color; }
 };
@@ -1499,11 +1647,11 @@ private:
 class BumpPass : public IDrawPass {
   DRAW_PASS_BOILERPLATE(BumpPass, BumpShader, BumpShaderIO)
 public:
-  BumpPass(std::string n, Mat4 mvp, Mat4 nm, Vec3 eye, Vec3 l, const Texture &t,
+  BumpPass(std::string n,Mat4 model_matrix, Mat4 mvp, Mat4 nm, Vec3 eye, Vec3 l, const Texture &t,
            const Texture &nmap, Mesh *m, int ms = MSAA_SAMPLES_4,
            const float (*off)[2] = MSAA_OFFSETS_4)
       : passName(n), mesh(m), msaaSamples(ms), msaaOffsets(off) {
-    shader = std::make_unique<BumpShader>(mvp, nm, eye, l, t, nmap);
+    shader = std::make_unique<BumpShader>(model_matrix,mvp, nm, eye, l, t, nmap);
   }
 
 private:
@@ -1920,11 +2068,11 @@ private:
 class NoMSAAPass : public IDrawPass {
   DRAW_PASS_BOILERPLATE(NoMSAAPass, BlinnPhongShader, BlinnPhongShaderIO)
 public:
-  NoMSAAPass(std::string n, Mat4 mvp, Mat4 nm, Vec3 eye, Vec3 l,
-             const Texture &t, Mesh *m)
+  NoMSAAPass(std::string n, Mat4 model_matrix,Mat4 mvp, Mat4 nm, Vec3 eye, Vec3 l,
+             const Texture &t, const Texture &tn,Mesh *m)
       : passName(n), mesh(m), msaaSamples(MSAA_SAMPLES_1),
         msaaOffsets(MSAA_OFFSETS_1) {
-    shader = std::make_unique<BlinnPhongShader>(mvp, nm, eye, l, t);
+    shader = std::make_unique<BlinnPhongShader>(model_matrix,mvp, nm, eye, l, t,tn);
   }
 
 private:
@@ -2008,6 +2156,13 @@ int main() {
   Texture brick2_n = loadTexture("models/bricks2/bricks2_normal.jpg");
   Texture brick2_d = loadTexture("models/bricks2/bricks2_disp.jpg");
 
+  Mesh cannon_m = loadModel("models/cannon/rigged_cannon.obj");
+  Texture cannon_t = loadTexture("models/cannon/Cannon.png");
+  Mat4 cannon_model_matrix = Mat4::identity();
+  cannon_model_matrix = Mat4::scale(cannon_model_matrix, Vec3{3.0f, 3.0f, 3.0f});
+  cannon_model_matrix = Mat4::translate(cannon_model_matrix, Vec3{0.3f, -0.2f, 0.0f});
+  Texture cannon_normal_map = loadTexture("models/cannon/normalMap1.png");
+
   // Camera and matrices
   Vec3 eye = {-2, 2, -2};
   Vec3 target = {0, 0, 0};
@@ -2016,6 +2171,10 @@ int main() {
   Mat4 P = Mat4::perspective(45.f, (float)W / H, .1f, 100.f);
   Mat4 VP = P * V;
   Mat4 N = V.inverse().transpose();
+
+  Mat4 earth_mvp = VP * cannon_model_matrix;
+  Mat4 N_earth = cannon_model_matrix.inverse().transpose();
+  Mat4 N_V_earth = (V*cannon_model_matrix).inverse().transpose();
 
   // Light for MultiLight and LightDepth
   std::vector<Light> lights = {
@@ -2032,17 +2191,17 @@ int main() {
   DrawGraph graph;
   // 1. BlinnPhong
   graph.addPass(std::make_unique<BlinnPhongPass>(
-      "output_blinn.ppm", VP, N, eye, Vec3{1, 1, -1}, spot_t, &spot_m));
+      "output_blinn.ppm", cannon_model_matrix,earth_mvp, N_earth, eye, Vec3{1, 1, -1}, cannon_t,cannon_normal_map, &cannon_m));
   // 2. Normal
   graph.addPass(
-      std::make_unique<NormalPass>("output_normal.ppm", VP, N, &spot_m));
+      std::make_unique<NormalPass>("output_normal.ppm",cannon_model_matrix,earth_mvp, N_V_earth, eye, Vec3{1, 1, -1}, cannon_t,cannon_normal_map, &cannon_m));
   // 3. Texture
-  graph.addPass(std::make_unique<TexturePass>("output_texture.ppm", VP, N,
-                                              spot_t, &spot_m));
+  graph.addPass(std::make_unique<TexturePass>("output_texture.ppm", earth_mvp, N_earth,
+                                              cannon_t, &cannon_m));
   // 4. Bump (use rock mesh and spot bump texture)
-  graph.addPass(std::make_unique<BumpPass>("output_bump.ppm", VP, N, eye,
-                                           Vec3{1, 1, -1}, rock_t, spot_bump,
-                                           &rock_m));
+  graph.addPass(std::make_unique<BumpPass>("output_bump.ppm",cannon_model_matrix, earth_mvp, N_earth, eye,
+                                           Vec3{1, 1, -1}, cannon_t, spot_bump, &cannon_m));
+
   // 5. Displacement (use spot mesh, brick2 disp texture)
   graph.addPass(std::make_unique<DisplacementPass>("output_disp.ppm", VP, N,
                                                    eye, Vec3{1, 1, -1}, spot_t,
@@ -2076,8 +2235,8 @@ int main() {
   graph.addPass(std::make_unique<MultiLightPass>("output_multi_light.ppm", VP,
                                                  eye, lights, spot_t, &spot_m));
   // 15. NoMSAA (BlinnPhong with 1x MSAA)
-  graph.addPass(std::make_unique<NoMSAAPass>("output_nomsa.ppm", VP, N, eye,
-                                             Vec3{1, 1, -1}, spot_t, &spot_m));
+  graph.addPass(std::make_unique<NoMSAAPass>("output_nomsa.ppm", Mat4::identity(),VP, N, eye,
+                                             Vec3{1, 1, -1}, spot_t,spot_bump, &spot_m));
   // 16. Bloom
   graph.addPass(std::make_unique<BloomPass>("output_bloom.ppm", VP, spot_t,
                                             0.8f, &spot_m));

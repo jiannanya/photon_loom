@@ -2313,7 +2313,7 @@ int main() {
 
   // Light for MultiLight and LightDepth
   std::vector<Light> lights = {
-      {{2.0f, 2.0f, 2.0f}, {0, 0, 0}, {1, 0, 0}, 1.0f},
+      {{2.0f, 2.0f, 2.0f}, {0, 0, 0}, {1, 1, 0}, 1.0f},
       {{-2.0f, 2.0f, -2.0f}, {0, 0, 0}, {0, 0, 1}, 0.8f},
       {{-2, -2, -2}, {0, 0, 0}, {0, 1, 0}, 0.8f}};
   Vec3 light_pos = {3.0f, 3.0f, 3.0f};

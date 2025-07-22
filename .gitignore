@@ -1,1 +1,8 @@
 build
+
+*.zip
+
+models/corbeta/
+models/earth/
+models/earth_with/
+models/earth_with_mountains_and_atmosphere/

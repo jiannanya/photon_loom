@@ -206,18 +206,7 @@ struct Mat4 {
     res.m[3][2] = -1.0f;
     return res;
   }
-  // static Mat4 perspective(float fov, float aspect, float n, float f) {
-  //   Mat4 res = Mat4::identity();
-  //   float rad = fov * (std::numbers::pi / 180.f);
-  //   float t = std::tan(rad / 2.f);
-  //   res.m[0][0] = 1.f / (aspect * t);
-  //   res.m[1][1] = 1.f / t;
-  //   res.m[2][2] = -(f + n) / (f - n);
-  //   res.m[2][3] = -(2 * f * n) / (f - n);
-  //   res.m[3][2] = -1.f;
-  //   // res.m[3][3] = 0.f;
-  //   return res;
-  // }
+
   static Mat4 orthographic(float l, float r, float b, float t, float n,
                            float f) {
     Mat4 res = Mat4::identity();
@@ -345,23 +334,7 @@ struct BumpShaderIO : public IShaderIO {
   Vec3 color;
 };
 
-// Displacement Shader 输入输出
-struct DisplacementShaderIO : public IShaderIO {
-  Vec3 position_world;
-  Vec3 normal_world;
-  Vec3 tangent_world;
-  Vec2 uv;
-  Vec4 position_clip;
-  Vec3 color;
-};
 
-// Shadow Shader 输入输出
-struct ShadowShaderIO : public IShaderIO {
-  Vec3 position_world;
-  Vec3 normal_world;
-  Vec4 position_clip;
-  Vec3 color;
-};
 
 // AO Shader 输入输出
 struct AOShaderIO : public IShaderIO {
@@ -373,13 +346,7 @@ struct AOShaderIO : public IShaderIO {
   Vec2 uv;
 };
 
-// Alpha Blend Shader 输入输出
-// struct AlphaBlendShaderIO : public IShaderIO {
-//   Vec3 position_world;
-//   Vec2 uv;
-//   Vec4 position_clip;
-//   Vec3 color;
-// };
+
 
 // SSAO Shader 输入输出
 struct SSAOShaderIO : public IShaderIO {
@@ -409,13 +376,6 @@ struct DepthShaderIO : public IShaderIO {
   Vec3 color;
 };
 
-// LightDepth Shader 输入输出
-// struct LightDepthShaderIO : public IShaderIO {
-//   Vec3 position_world;
-//   float ndc_z = 0.0f;
-//   Vec4 position_clip;
-//   Vec3 color;
-// };
 
 // MultiLight Shader 输入输出
 struct MultiLightShaderIO : public IShaderIO {
@@ -608,28 +568,6 @@ struct NormalShader : public IShader {
   }
 };
 
-// // Normal Shader (可视化法线)
-// struct NormalShader : public IShader {
-//   Mat4 MVP;
-//   Mat4 NormalMatrix; // 法线变换矩阵
-//   NormalShader(const Mat4 &mvp, Mat4 &nm) : MVP(mvp), NormalMatrix(nm) {}
-
-//   void vertex(IShaderIO &io) override {
-//     auto &data = static_cast<NormalShaderIO &>(io);
-//     data.position_clip =
-//         MVP.multiply({data.position_world.x, data.position_world.y,
-//                       data.position_world.z, 1.0f});
-//   }
-
-//   void fragment(IShaderIO &io) override {
-//     auto &data = static_cast<NormalShaderIO &>(io);
-//     Vec3 n = NormalMatrix
-//                  .multiply(Vec4(data.normal_world.x, data.normal_world.y,
-//                                 data.normal_world.z, 0.0f))
-//                  .normalize();
-//     data.color = {n.x * 0.5f + 0.5f, n.y * 0.5f + 0.5f, n.z * 0.5f + 0.5f};
-//   }
-// };
 
 // Texture Shader (只显示纹理)
 struct TextureShader : public IShader {
@@ -739,69 +677,6 @@ struct BumpShader : public IShader {
   }
 };
 
-// Displacement Shader (位移贴图)
-struct DisplacementShader : public IShader {
-  Mat4 MVP;
-  Vec3 eye_pos_world, light_dir_world;
-  Texture diffuse_tex, displacement_map_tex;
-  float ambient_strength, diffuse_strength, specular_strength, shininess;
-  float displacement_scale; // 位移强度
-  Mat4 NormalMatrix;
-  DisplacementShader(const Mat4 &mvp, const Mat4 &nm, const Vec3 &eye,
-                     const Vec3 &light_dir, const Texture &tex,
-                     const Texture &dispmap, float scale = 0.1f)
-      : MVP(mvp), NormalMatrix(nm), eye_pos_world(eye),
-        light_dir_world(light_dir), diffuse_tex(tex),
-        displacement_map_tex(dispmap), ambient_strength(0.1f),
-        diffuse_strength(0.7f), specular_strength(0.2f), shininess(32.0f),
-        displacement_scale(scale) {}
-
-  void vertex(IShaderIO &io) override {
-    auto &data = static_cast<DisplacementShaderIO &>(io);
-    Vec3 pos = data.position_world;
-    if (displacement_map_tex.w > 0) {
-      float h = displacement_map_tex.bilinear(data.uv).r / 255.0f;
-      pos = pos + data.normal_world * (h - 0.5f) * displacement_scale;
-    }
-    data.position_clip = MVP.multiply({pos.x, pos.y, pos.z, 1.0f});
-  }
-
-  void fragment(IShaderIO &io) override {
-    auto &data = static_cast<DisplacementShaderIO &>(io);
-    // 构造TBN矩阵
-    Vec3 N = NormalMatrix
-                 .multiply(Vec4(data.normal_world.x, data.normal_world.y,
-                                data.normal_world.z, 0.0f))
-                 .normalize();
-    Vec3 T = data.tangent_world.normalize();
-    T = (T - N * N.dot(T)).normalize();
-    Vec3 B = N.cross(T);
-
-    // 视线和光线转到切线空间
-    Vec3 V = (eye_pos_world - data.position_world).normalize();
-    Vec3 L = (light_dir_world * -1.0f).normalize();
-    Vec3 V_tangent = Vec3{V.dot(T), V.dot(B), V.dot(N)};
-    Vec3 L_tangent = Vec3{L.dot(T), L.dot(B), L.dot(N)};
-    Vec3 H_tangent = (L_tangent + V_tangent).normalize();
-    // 采样和着色
-    float NdotL = std::max(0.0f, N.dot(L));
-    float NdotH = std::max(0.0f, N.dot((L + V).normalize()));
-    float spec = std::pow(NdotH, shininess);
-    Vec3 base_color = {1.0f, 1.0f, 1.0f};
-    if (diffuse_tex.w > 0) {
-      Color tex_color = diffuse_tex.bilinear(data.uv);
-      base_color = {tex_color.r / 255.0f, tex_color.g / 255.0f,
-                    tex_color.b / 255.0f};
-    }
-    Vec3 final_color = base_color * ambient_strength +
-                       base_color * diffuse_strength * NdotL +
-                       Vec3{1, 1, 1} * specular_strength * spec;
-    final_color.x = std::pow(final_color.x, 1.0f / 2.2f);
-    final_color.y = std::pow(final_color.y, 1.0f / 2.2f);
-    final_color.z = std::pow(final_color.z, 1.0f / 2.2f);
-    data.color = final_color;
-  }
-};
 
 // Parallax Shader (视差贴图)
 struct ParallaxShader : public IShader {
@@ -937,34 +812,6 @@ struct ParallaxShader : public IShader {
   }
 };
 
-// Shadow Shader (简化阴影可视化)
-struct ShadowShader : public IShader {
-  Mat4 MVP;
-  Vec3 light_dir_world; // 光照方向
-  Mat4 NormalMatrix;
-  ShadowShader(const Mat4 &mvp, const Mat4 &nm, const Vec3 &light_dir)
-      : MVP(mvp), NormalMatrix(nm), light_dir_world(light_dir) {}
-
-  void vertex(IShaderIO &io) override {
-    auto &data = static_cast<ShadowShaderIO &>(io);
-    data.position_clip =
-        MVP.multiply({data.position_world.x, data.position_world.y,
-                      data.position_world.z, 1.0f});
-  }
-
-  void fragment(IShaderIO &io) override {
-    auto &data = static_cast<ShadowShaderIO &>(io);
-    Vec3 N = NormalMatrix
-                 .multiply(Vec4(data.normal_world.x, data.normal_world.y,
-                                data.normal_world.z, 0.0f))
-                 .normalize();
-    Vec3 L = (light_dir_world * -1.0f).normalize();
-    float NdotL = std::max(0.0f, N.dot(L));
-    float shadow_factor = NdotL < 0.3f ? 0.3f : 1.0f;
-    data.color = Vec3{shadow_factor, shadow_factor, shadow_factor};
-  }
-};
-
 // AO Shader (改进: 模拟方向性环境光遮蔽)
 // 这是一个简化的环境光遮蔽，它根据法线方向相对于一个“环境光方向”来计算遮蔽。
 // 更真实的AO需要考虑周围几何体。
@@ -1025,33 +872,6 @@ struct AOShader : public IShader {
     data.color = Vec3{ao, ao, ao};
   }
 };
-
-// Alpha Blend Shader (透明混合)
-// struct AlphaBlendShader : public IShader {
-//   Mat4 MVP;
-//   Texture diffuse_tex;
-//   float alpha_value;
-//   Mat4 NormalMatrix;
-//   AlphaBlendShader(const Mat4 &mvp, const Mat4 &nm, const Texture &tex,
-//                    float alpha = 0.5f)
-//       : MVP(mvp), NormalMatrix(nm), diffuse_tex(tex), alpha_value(alpha) {}
-
-//   void vertex(IShaderIO &io) override {
-//     auto &data = static_cast<AlphaBlendShaderIO &>(io);
-//     data.position_clip =
-//         MVP.multiply({data.position_world.x, data.position_world.y,
-//                       data.position_world.z, 1.0f});
-//   }
-
-//   void fragment(IShaderIO &io) override {
-//     auto &data = static_cast<AlphaBlendShaderIO &>(io);
-//     Color tex_color = diffuse_tex.bilinear(data.uv);
-//     Vec3 base = {tex_color.r / 255.0f, tex_color.g / 255.0f,
-//                  tex_color.b / 255.0f};
-//     Vec3 bg = {1.0f, 1.0f, 1.0f};
-//     data.color = base * alpha_value + bg * (1.0f - alpha_value);
-//   }
-// };
 
 // SSAO Shader (改进: 屏幕空间环境光遮蔽模拟)
 // 这是一个简化的SSAO，模拟在屏幕空间基于深度缓冲的遮蔽。
@@ -1274,34 +1094,6 @@ struct DepthShader : public IShader {
   }
 };
 
-// LightDepth Shader (光源深度图，用于概念性Shadow Map生成)
-// 这个shader输出从光源视角看到的深度，理论上用于生成Shadow Map
-// struct LightDepthShader : public IShader {
-//   Mat4 LightMVP; // 光源的Model-View-Projection矩阵
-
-//   LightDepthShader(const Mat4 &light_mvp) : LightMVP(light_mvp) {}
-
-//   void vertex(IShaderIO &io) override {
-//     auto &data = static_cast<LightDepthShaderIO &>(io);
-//     data.position_clip =
-//         LightMVP.multiply({data.position_world.x, data.position_world.y,
-//                            data.position_world.z, 1.0f});
-//   }
-
-//   void fragment(IShaderIO &io) override {
-//     auto &data = static_cast<LightDepthShaderIO &>(io);
-//     float depth_normalized = (data.ndc_z + 1.0f) * 0.5f;
-//     data.color = Vec3{depth_normalized, depth_normalized, depth_normalized};
-//   }
-// };
-
-// // 光源结构体
-// struct Light {
-//   Vec3 position;   // 光源位置 (用于点光源)
-//   Vec3 direction;  // 光源方向 (从物体指向光源，用于平行光和聚光灯)
-//   Vec3 color;      // 光源颜色
-//   float intensity; // 光源强度
-// };
 
 // MultiLight Blinn-Phong Shader (多光源，无真实阴影)
 struct MultiLightBlinnPhongShader : public IShader {
@@ -1797,57 +1589,8 @@ private:
   Vec3 getOutputColor(const BumpShaderIO &f) { return f.color; }
 };
 
-// // 5. Displacement
-// class DisplacementPass : public IDrawPass {
-//   DRAW_PASS_BOILERPLATE(DisplacementPass, DisplacementShader,
-//                         DisplacementShaderIO)
-// public:
-//   DisplacementPass(std::string n, Mat4 mvp, Mat4 nm, Vec3 eye, Vec3 l,
-//                    const Texture &t, const Texture &dmap, float scale, Mesh *m,
-//                    int ms = MSAA_SAMPLES_4,
-//                    const float (*off)[2] = MSAA_OFFSETS_4)
-//       : passName(n), mesh(m), msaaSamples(ms), msaaOffsets(off) {
-//     shader =
-//         std::make_unique<DisplacementShader>(mvp, nm, eye, l, t, dmap, scale);
-//   }
 
-// private:
-//   void initializeVertex(DisplacementShaderIO &io, const Vertex &v) {
-//     io.position_world = v.pos;
-//     io.normal_world = v.normal;
-//     io.tangent_world = v.tangent;
-//     io.uv = v.uv;
-//   }
-//   void interpolateFragment(DisplacementShaderIO &f,
-//                            const DisplacementShaderIO v[3], float w0, float w1,
-//                            float w2, float iw, float nz, const Vec3 s[3], int W,
-//                            int H) {
-//     f.position_world =
-//         baryInterp(v[0].position_world * (1 / v[0].position_clip.w),
-//                    v[1].position_world * (1 / v[1].position_clip.w),
-//                    v[2].position_world * (1 / v[2].position_clip.w), w0, w1,
-//                    w2) *
-//         iw;
-//     f.normal_world =
-//         baryInterp(v[0].normal_world * (1 / v[0].position_clip.w),
-//                    v[1].normal_world * (1 / v[1].position_clip.w),
-//                    v[2].normal_world * (1 / v[2].position_clip.w), w0, w1, w2) *
-//         iw;
-//     f.tangent_world =
-//         baryInterp(v[0].tangent_world * (1 / v[0].position_clip.w),
-//                    v[1].tangent_world * (1 / v[1].position_clip.w),
-//                    v[2].tangent_world * (1 / v[2].position_clip.w), w0, w1,
-//                    w2) *
-//         iw;
-//     f.uv = baryInterp(v[0].uv * (1 / v[0].position_clip.w),
-//                       v[1].uv * (1 / v[1].position_clip.w),
-//                       v[2].uv * (1 / v[2].position_clip.w), w0, w1, w2) *
-//            iw;
-//   }
-//   Vec3 getOutputColor(const DisplacementShaderIO &f) { return f.color; }
-// };
-
-// 6. Parallax
+// 5. Parallax
 class ParallaxPass : public IDrawPass {
   DRAW_PASS_BOILERPLATE(ParallaxPass, ParallaxShader, ParallaxShaderIO)
 public:
@@ -1895,40 +1638,7 @@ private:
   Vec3 getOutputColor(const ParallaxShaderIO &f) { return f.color; }
 };
 
-// 7. Shadow
-// class ShadowPass : public IDrawPass {
-//   DRAW_PASS_BOILERPLATE(ShadowPass, ShadowShader, ShadowShaderIO)
-// public:
-//   ShadowPass(std::string n, Mat4 mvp, Mat4 nm, Vec3 l, Mesh *m,
-//              int ms = MSAA_SAMPLES_4, const float (*off)[2] = MSAA_OFFSETS_4)
-//       : passName(n), mesh(m), msaaSamples(ms), msaaOffsets(off) {
-//     shader = std::make_unique<ShadowShader>(mvp, nm, l);
-//   }
-
-// private:
-//   void initializeVertex(ShadowShaderIO &io, const Vertex &v) {
-//     io.position_world = v.pos;
-//     io.normal_world = v.normal;
-//   }
-//   void interpolateFragment(ShadowShaderIO &f, const ShadowShaderIO v[3],
-//                            float w0, float w1, float w2, float iw, float nz,
-//                            const Vec3 s[3], int W, int H) {
-//     f.position_world =
-//         baryInterp(v[0].position_world * (1 / v[0].position_clip.w),
-//                    v[1].position_world * (1 / v[1].position_clip.w),
-//                    v[2].position_world * (1 / v[2].position_clip.w), w0, w1,
-//                    w2) *
-//         iw;
-//     f.normal_world =
-//         baryInterp(v[0].normal_world * (1 / v[0].position_clip.w),
-//                    v[1].normal_world * (1 / v[1].position_clip.w),
-//                    v[2].normal_world * (1 / v[2].position_clip.w), w0, w1, w2) *
-//         iw;
-//   }
-//   Vec3 getOutputColor(const ShadowShaderIO &f) { return f.color; }
-// };
-
-// 8. AO
+// 6. AO
 class AOPass : public IDrawPass {
   DRAW_PASS_BOILERPLATE(AOPass, AOShader, AOShaderIO)
 public:
@@ -1971,40 +1681,8 @@ private:
   Vec3 getOutputColor(const AOShaderIO &f) { return f.color; }
 };
 
-// // 9. AlphaBlend
-// class AlphaBlendPass : public IDrawPass {
-//   DRAW_PASS_BOILERPLATE(AlphaBlendPass, AlphaBlendShader, AlphaBlendShaderIO)
-// public:
-//   AlphaBlendPass(std::string n, Mat4 mvp, Mat4 nm, const Texture &t,
-//                  float alpha, Mesh *m, int ms = MSAA_SAMPLES_4,
-//                  const float (*off)[2] = MSAA_OFFSETS_4)
-//       : passName(n), mesh(m), msaaSamples(ms), msaaOffsets(off) {
-//     shader = std::make_unique<AlphaBlendShader>(mvp, nm, t, alpha);
-//   }
 
-// private:
-//   void initializeVertex(AlphaBlendShaderIO &io, const Vertex &v) {
-//     io.position_world = v.pos;
-//     io.uv = v.uv;
-//   }
-//   void interpolateFragment(AlphaBlendShaderIO &f, const AlphaBlendShaderIO v[3],
-//                            float w0, float w1, float w2, float iw, float nz,
-//                            const Vec3 s[3], int W, int H) {
-//     f.position_world =
-//         baryInterp(v[0].position_world * (1 / v[0].position_clip.w),
-//                    v[1].position_world * (1 / v[1].position_clip.w),
-//                    v[2].position_world * (1 / v[2].position_clip.w), w0, w1,
-//                    w2) *
-//         iw;
-//     f.uv = baryInterp(v[0].uv * (1 / v[0].position_clip.w),
-//                       v[1].uv * (1 / v[1].position_clip.w),
-//                       v[2].uv * (1 / v[2].position_clip.w), w0, w1, w2) *
-//            iw;
-//   }
-//   Vec3 getOutputColor(const AlphaBlendShaderIO &f) { return f.color; }
-// };
-
-// 10. SSAO
+// 7. SSAO
 class SSAOPass : public IDrawPass {
   DRAW_PASS_BOILERPLATE(SSAOPass, SSAOShader, SSAOShaderIO)
 public:
@@ -2055,7 +1733,7 @@ private:
   Vec3 getOutputColor(const SSAOShaderIO &f) { return f.color; }
 };
 
-// 11. SpotLight
+// 8. SpotLight
 class SpotLightPass : public IDrawPass {
   DRAW_PASS_BOILERPLATE(SpotLightPass, SpotLightShader, SpotLightShaderIO)
 public:
@@ -2096,7 +1774,7 @@ private:
   Vec3 getOutputColor(const SpotLightShaderIO &f) { return f.color; }
 };
 
-// 12. Depth
+// 9. Depth
 class DepthPass : public IDrawPass {
   DRAW_PASS_BOILERPLATE(DepthPass, DepthShader, DepthShaderIO)
 public:
@@ -2124,35 +1802,8 @@ private:
   Vec3 getOutputColor(const DepthShaderIO &f) { return f.color; }
 };
 
-// // 13. LightDepth
-// class LightDepthPass : public IDrawPass {
-//   DRAW_PASS_BOILERPLATE(LightDepthPass, LightDepthShader, LightDepthShaderIO)
-// public:
-//   LightDepthPass(std::string n, Mat4 mvp, Mesh *m, int ms = MSAA_SAMPLES_4,
-//                  const float (*off)[2] = MSAA_OFFSETS_4)
-//       : passName(n), mesh(m), msaaSamples(ms), msaaOffsets(off) {
-//     shader = std::make_unique<LightDepthShader>(mvp);
-//   }
 
-// private:
-//   void initializeVertex(LightDepthShaderIO &io, const Vertex &v) {
-//     io.position_world = v.pos;
-//   }
-//   void interpolateFragment(LightDepthShaderIO &f, const LightDepthShaderIO v[3],
-//                            float w0, float w1, float w2, float iw, float nz,
-//                            const Vec3 s[3], int W, int H) {
-//     f.position_world =
-//         baryInterp(v[0].position_world * (1 / v[0].position_clip.w),
-//                    v[1].position_world * (1 / v[1].position_clip.w),
-//                    v[2].position_world * (1 / v[2].position_clip.w), w0, w1,
-//                    w2) *
-//         iw;
-//     f.ndc_z = nz;
-//   }
-//   Vec3 getOutputColor(const LightDepthShaderIO &f) { return f.color; }
-// };
-
-// 14. MultiLight
+// 10. MultiLight
 class MultiLightPass : public IDrawPass {
   DRAW_PASS_BOILERPLATE(MultiLightPass, MultiLightBlinnPhongShader,
                         MultiLightShaderIO)
@@ -2199,7 +1850,7 @@ private:
   Vec3 getOutputColor(const MultiLightShaderIO &f) { return f.color; }
 };
 
-// 15. NoMSAA (BlinnPhong with 1x MSAA)
+// 11. NoMSAA (BlinnPhong with 1x MSAA)
 class NoMSAAPass : public IDrawPass {
   DRAW_PASS_BOILERPLATE(NoMSAAPass, BlinnPhongShader, BlinnPhongShaderIO)
 public:
@@ -2311,7 +1962,7 @@ int main() {
   Mat4 N_cannon = cannon_model_matrix.inverse().transpose();
   Mat4 N_V_cannon = (V*cannon_model_matrix).inverse().transpose();
 
-  // Light for MultiLight and LightDepth
+  // Light for MultiLight
   std::vector<Light> lights = {
       {{2.0f, 2.0f, 2.0f}, {0, 0, 0}, {1, 1, 0}, 1.0f},
       {{-2.0f, 2.0f, -2.0f}, {0, 0, 0}, {0, 0, 1}, 0.8f},
@@ -2337,39 +1988,28 @@ int main() {
   graph.addPass(std::make_unique<BumpPass>("output_bump.ppm",cannon_model_matrix, cannon_mvp, N_cannon, eye,
                                            Vec3{1, 1, -1}, cannon_t, spot_bump, &cannon_m));
 
-  // // 5. Displacement (use spot mesh, brick2 disp texture)
-  // graph.addPass(std::make_unique<DisplacementPass>("output_disp.ppm", VP, N_cannon,
-  //                                                  eye, Vec3{1, 1, -1}, cannon_t,
-  //                                                  brick2_d, 0.1f, &cannon_m));
-  // // 6. Shadow
-  // graph.addPass(std::make_unique<ShadowPass>("output_shadow.ppm", cannon_model_matrix, N_cannon,
-  //                                            Vec3{1, 1, -1}, &cannon_m));
-  // 7. AO
+  // 5. AO
   graph.addPass(
       std::make_unique<AOPass>("output_ao.ppm", cannon_model_matrix,cannon_mvp, N_cannon, Vec3{0, 1, 0}, &cannon_m,cannon_normal_map));
-  // // 8. AlphaBlend
-  // graph.addPass(std::make_unique<AlphaBlendPass>("output_alpha.ppm", VP, N,
-  //                                                spot_t, 0.7f, &spot_m));
-  // 9. Parallax (use brick2 mesh and textures)
+
+  // 6. Parallax (use brick2 mesh and textures)
   graph.addPass(std::make_unique<ParallaxPass>(
       "output_parallax.ppm", VP, N, eye, Vec3{1, 1, -1}, brick2_t, brick2_d,
       brick2_n, 0.05f, &brick2_m));
-  // 10. SSAO
+  // 7. SSAO
   graph.addPass(std::make_unique<SSAOPass>("output_ssao.ppm",cannon_model_matrix, cannon_mvp, N_V_cannon, V, 0.1f,
                                            100.f, &cannon_m,cannon_normal_map));
-  // 11. SpotLight
+  // 8. SpotLight
   graph.addPass(std::make_unique<SpotLightPass>("output_spotlight.ppm", VP, eye,
                                                 Vec3{0, 5, 5}, Vec3{0, -1, -1},
                                                 spot_t, 5.0f, 10.0f, &spot_m));
-  // 12. Depth
+  // 9. Depth
   graph.addPass(std::make_unique<DepthPass>("output_depth.ppm", cannon_mvp, &cannon_m));
-  // // 13. LightDepth
-  // graph.addPass(std::make_unique<LightDepthPass>("output_light_depth.ppm",
-  //                                                light_mvp, &cannon_m));
-  // 14. MultiLight
+
+  // 10. MultiLight
   graph.addPass(std::make_unique<MultiLightPass>("output_multi_light.ppm", cannon_model_matrix,cannon_mvp,N_cannon,
                                                  eye, lights, cannon_t, &cannon_m,cannon_normal_map));
-  // 15. NoMSAA (BlinnPhong with 1x MSAA)
+  // 11. NoMSAA (BlinnPhong with 1x MSAA)
   graph.addPass(std::make_unique<NoMSAAPass>("output_nomsa.ppm", cannon_model_matrix,cannon_mvp, N_cannon, eye,
                                              Vec3{1, 1, -1}, cannon_t,cannon_normal_map, &cannon_m));
   // // 16. Bloom

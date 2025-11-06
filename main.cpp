@@ -2031,7 +2031,7 @@ int main() {
                                                  eye, lights, cannon_t, &cannon_m,cannon_normal_map));
 
   // 11. NoMSAA (BlinnPhong with 1x MSAA)
-  graph.addPass(std::make_unique<NoMSAAPass>("output_nomsa.ppm", cannon_model_matrix,cannon_mvp, N_cannon, eye,
+  graph.addPass(std::make_unique<NoMSAAPass>("output_nomsaa.ppm", cannon_model_matrix,cannon_mvp, N_cannon, eye,
                                              Vec3{1, 1, -1}, cannon_t,cannon_normal_map, &cannon_m));
 
   graph.render(W, H);

@@ -397,13 +397,13 @@ struct ParallaxShaderIO : public IShaderIO {
   Vec3 color;
 };
 
-// struct BloomShaderIO : public IShaderIO {
-//   Vec3 position_world;
-//   Vec2 uv;
-//   Vec4 position_clip;
-//   Vec3 color;
-//   Vec3 bloom_color; // 新增 bloom_color 用于存储 Bloom 结果
-// };
+struct BloomShaderIO : public IShaderIO {
+  Vec3 position_world;
+  Vec2 uv;
+  Vec4 position_clip;
+  Vec3 color;
+  Vec3 bloom_color; // 用于存储 Bloom 结果
+};
 
 // ========================
 // Shader 解耦：接口与各实现
@@ -1182,35 +1182,6 @@ struct MultiLightBlinnPhongShader : public IShader {
   }
 };
 
-// struct BloomShader : public IShader {
-//   Mat4 MVP;
-//   Texture input_texture; // 输入纹理
-//   float bloom_strength;  // Bloom强度
-
-//   BloomShader(const Mat4 &mvp, const Texture &tex, float strength = 1.0f)
-//       : MVP(mvp), input_texture(tex), bloom_strength(strength) {}
-
-//   void vertex(IShaderIO &io) override {
-//     auto &data = static_cast<BloomShaderIO &>(io);
-//     data.position_clip =
-//         MVP.multiply({data.position_world.x, data.position_world.y,
-//                       data.position_world.z, 1.0f});
-//   }
-
-//   void fragment(IShaderIO &io) override {
-//     auto &data = static_cast<BloomShaderIO &>(io);
-//     Color tex_color = input_texture.bilinear(data.uv);
-//     Vec3 color = {tex_color.r / 255.0f, tex_color.g / 255.0f,
-//                   tex_color.b / 255.0f};
-//     float lum = 0.2126f * color.x + 0.7152f * color.y + 0.0722f * color.z;
-//     if (lum > 0.7f) { // 阈值可调
-//       data.bloom_color = color * bloom_strength;
-//     } else {
-//       data.bloom_color = Vec3{0.0f, 0.0f, 0.0f};
-//     }
-//   }
-// };
-
 template <typename T>
 T baryInterp(const T &v0, const T &v1, const T &v2, float w0, float w1,
              float w2) {
@@ -1283,6 +1254,52 @@ Texture loadTexture(const std::string &f) {
   return t;
 }
 
+// Generate a unit cube centered at origin with given half-size
+Mesh makeCubeMesh(float halfSize = 0.1f) {
+  Mesh m;
+  // 8 corners
+  Vec3 p[8] = {
+      {-halfSize, -halfSize, -halfSize}, {halfSize, -halfSize, -halfSize},
+      {halfSize, halfSize, -halfSize},   {-halfSize, halfSize, -halfSize},
+      {-halfSize, -halfSize, halfSize},  {halfSize, -halfSize, halfSize},
+      {halfSize, halfSize, halfSize},    {-halfSize, halfSize, halfSize}};
+  auto pushTri = [&](int a, int b, int c) {
+    Triangle t;
+    t.v[0].pos = p[a];
+    t.v[1].pos = p[b];
+    t.v[2].pos = p[c];
+    // simple UVs
+    t.v[0].uv = {0, 0};
+    t.v[1].uv = {1, 0};
+    t.v[2].uv = {1, 1};
+    // compute normal per face
+    Vec3 n = (t.v[1].pos - t.v[0].pos).cross(t.v[2].pos - t.v[0].pos).normalize();
+    for (int i = 0; i < 3; ++i)
+      t.v[i].normal = n;
+    m.triangles.push_back(t);
+  };
+  // front
+  pushTri(4, 5, 6);
+  pushTri(4, 6, 7);
+  // back
+  pushTri(0, 3, 2);
+  pushTri(0, 2, 1);
+  // left
+  pushTri(0, 4, 7);
+  pushTri(0, 7, 3);
+  // right
+  pushTri(1, 2, 6);
+  pushTri(1, 6, 5);
+  // top
+  pushTri(3, 7, 6);
+  pushTri(3, 6, 2);
+  // bottom
+  pushTri(0, 1, 5);
+  pushTri(0, 5, 4);
+  return m;
+}
+
+
 class Rasterizer {
 public:
   Rasterizer(int w, int h, int msaa, const float (*offs)[2])
@@ -1351,6 +1368,28 @@ public:
     std::cout << "Done: " << file << std::endl;
   }
 
+  // Convert current color buffer to a Texture (averaging MSAA samples)
+  Texture getTexture() const {
+    Texture t;
+    t.w = W;
+    t.h = H;
+    t.data.resize(W * H);
+    for (int y = 0; y < H; ++y) {
+      for (int x = 0; x < W; ++x) {
+        Vec3 avg_c = {0.0f, 0.0f, 0.0f};
+        for (int s = 0; s < msaaSamples; ++s)
+          avg_c = avg_c + color_buffer[(y * W + x) * msaaSamples + s];
+        avg_c = avg_c * (1.f / msaaSamples);
+        Color c;
+        c.r = (unsigned char)std::clamp((int)(avg_c.x * 255.99f), 0, 255);
+        c.g = (unsigned char)std::clamp((int)(avg_c.y * 255.99f), 0, 255);
+        c.b = (unsigned char)std::clamp((int)(avg_c.z * 255.99f), 0, 255);
+        t.data[y * W + x] = c;
+      }
+    }
+    return t;
+  }
+
 private:
   int W, H, msaaSamples;
   const float (*msaaOffsets)[2];
@@ -1414,7 +1453,7 @@ private:                                                                       \
   const float(*msaaOffsets)[2];
 
 // ========================
-// 16个具体DrawPass实现
+// 具体DrawPass实现
 // ========================
 
 // 1. BlinnPhong
@@ -1897,38 +1936,6 @@ private:
   Vec3 getOutputColor(const BlinnPhongShaderIO &f) { return f.color; }
 };
 
-// 16. Bloom
-// class BloomPass : public IDrawPass {
-//   DRAW_PASS_BOILERPLATE(BloomPass, BloomShader, BloomShaderIO)
-// public:
-//   BloomPass(std::string n, Mat4 mvp, const Texture &t, float strength, Mesh *m,
-//             int ms = MSAA_SAMPLES_4, const float (*off)[2] = MSAA_OFFSETS_4)
-//       : passName(n), mesh(m), msaaSamples(ms), msaaOffsets(off) {
-//     shader = std::make_unique<BloomShader>(mvp, t, strength);
-//   }
-
-// private:
-//   void initializeVertex(BloomShaderIO &io, const Vertex &v) {
-//     io.position_world = v.pos;
-//     io.uv = v.uv;
-//   }
-//   void interpolateFragment(BloomShaderIO &f, const BloomShaderIO v[3], float w0,
-//                            float w1, float w2, float iw, float nz,
-//                            const Vec3 s[3], int W, int H) {
-//     f.position_world =
-//         baryInterp(v[0].position_world * (1 / v[0].position_clip.w),
-//                    v[1].position_world * (1 / v[1].position_clip.w),
-//                    v[2].position_world * (1 / v[2].position_clip.w), w0, w1,
-//                    w2) *
-//         iw;
-//     f.uv = baryInterp(v[0].uv * (1 / v[0].position_clip.w),
-//                       v[1].uv * (1 / v[1].position_clip.w),
-//                       v[2].uv * (1 / v[2].position_clip.w), w0, w1, w2) *
-//            iw;
-//   }
-//   Vec3 getOutputColor(const BloomShaderIO &f) { return f.bloom_color; }
-// };
-
 int main() {
   const int W = 512, H = 512;
   // Load meshes and textures
@@ -1948,6 +1955,19 @@ int main() {
   cannon_model_matrix = Mat4::scale(cannon_model_matrix, Vec3{3.0f, 3.0f, 3.0f});
   cannon_model_matrix = Mat4::translate(cannon_model_matrix, Vec3{0.3f, -0.2f, 0.0f});
   Texture cannon_normal_map = loadTexture("models/cannon/normalMap1.png");
+
+    // Mesh quad_m;
+  // // full-screen quad, two triangles covering NDC [-1,1] with UVs [0,1]
+  // Triangle t0;
+  // t0.v[0].pos = Vec3{-1.0f, -1.0f, 0.0f}; t0.v[0].uv = Vec2{0.0f, 1.0f};
+  // t0.v[1].pos = Vec3{1.0f, -1.0f, 0.0f}; t0.v[1].uv = Vec2{1.0f, 1.0f};
+  // t0.v[2].pos = Vec3{1.0f, 1.0f, 0.0f}; t0.v[2].uv = Vec2{1.0f, 0.0f};
+  // Triangle t1;
+  // t1.v[0].pos = Vec3{-1.0f, -1.0f, 0.0f}; t1.v[0].uv = Vec2{0.0f, 1.0f};
+  // t1.v[1].pos = Vec3{1.0f, 1.0f, 0.0f}; t1.v[1].uv = Vec2{1.0f, 0.0f};
+  // t1.v[2].pos = Vec3{-1.0f, 1.0f, 0.0f}; t1.v[2].uv = Vec2{0.0f, 0.0f};
+  // quad_m.triangles.push_back(t0);
+  // quad_m.triangles.push_back(t1);
 
   // Camera and matrices
   Vec3 eye = {-2, 2, -2};
@@ -2006,16 +2026,16 @@ int main() {
   // 9. Depth
   graph.addPass(std::make_unique<DepthPass>("output_depth.ppm", cannon_mvp, &cannon_m));
 
-  // 10. MultiLight
+   // 10. MultiLight
   graph.addPass(std::make_unique<MultiLightPass>("output_multi_light.ppm", cannon_model_matrix,cannon_mvp,N_cannon,
                                                  eye, lights, cannon_t, &cannon_m,cannon_normal_map));
+
   // 11. NoMSAA (BlinnPhong with 1x MSAA)
   graph.addPass(std::make_unique<NoMSAAPass>("output_nomsa.ppm", cannon_model_matrix,cannon_mvp, N_cannon, eye,
                                              Vec3{1, 1, -1}, cannon_t,cannon_normal_map, &cannon_m));
-  // // 16. Bloom
-  // graph.addPass(std::make_unique<BloomPass>("output_bloom.ppm", VP, spot_t,
-  //                                           0.8f, &spot_m));
 
   graph.render(W, H);
   return 0;
 }
+
+
